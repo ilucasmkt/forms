@@ -392,7 +392,7 @@
       }
 
       // Envia lead para webhook n8n (WhatsApp)
-      fetch('https://n8n.autowisebrasil.com.br/webhook-test/autowise-lead', {
+      fetch('https://webhook.autowisebrasil.com.br/webhook/autowise-lead', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nome, telefone, instagram, atuacao, estoque })
