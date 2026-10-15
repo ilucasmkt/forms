@@ -3,8 +3,8 @@
  * Roda por cima da página já pronta, sem mexer no código dela:
  *  1. guarda de onde o visitante veio (UTMs, fbclid) e manda junto com o lead
  *  2. WhatsApp: máscara e só aceita celular brasileiro com DDD válido
- *  3. eventos do Pixel: "Lead" para todo envio e "CompleteRegistration" para o lead qualificado
- *     (dono da loja com estoque a partir de MIN_STOCK), com o mesmo event_id enviado ao webhook
+ *  3. Pixel: só o dono(a) da loja conta como "Lead" na campanha (gerente, vendedor e dono de agência não),
+ *     com o mesmo event_id enviado ao webhook
  *  4. aviso por WhatsApp para o Lucas a cada cadastro (pelo CRM, instância avisos-crm)
  *  5. aviso de privacidade (LGPD) no formulário e no rodapé
  *  6. proteção simples contra robôs (campo-isca e tempo de preenchimento)
@@ -16,8 +16,8 @@
   var WEBHOOK_PATH = '/webhook/pipedrive';
   // aviso por WhatsApp: o CRM recebe o mesmo cadastro e manda a mensagem pela instância avisos-crm
   var NOTIFY_URL = 'https://app.autowisebrasil.com.br/api/public/forms-lead';
-  // lead qualificado = dono(a) da loja com pelo menos este estoque (o servidor aplica a mesma regra)
-  var MIN_STOCK = 10;
+  // só quem tem este cargo conta como Lead na campanha (todo cadastro avisa no WhatsApp)
+  var LEAD_ROLE = 'Dono(a) da Loja';
   var PRIVACY_URL = '/privacidade.html';
   var PIXEL_NAME = 'Protocolo 5M';
   // Se o lead não for qualificado (não é dono, ou o investimento mínimo não faz sentido), esconde o Calendly
@@ -226,8 +226,7 @@
     var data = (attribution && attribution.data) || {};
     var cookies = metaCookies(data);
     var trap = document.querySelector('[data-ads-trap]');
-    var stock = parseInt(String(body.estoque || '').replace(/\D/g, ''), 10);
-    var qualified = body.cargo === 'Dono(a) da Loja' && stock >= MIN_STOCK;
+    var qualified = body.cargo === LEAD_ROLE;
     var wa = digits(body.whatsapp);
     if (wa.length === 13 && wa.slice(0, 2) === '55') wa = wa.slice(2);
 
@@ -260,10 +259,9 @@
         var enriched = enrich(JSON.parse(init.body));
         lead = { eventId: enriched.event_id, qualified: enriched.qualificado, robot: enriched.suspeito_robo };
         init = Object.assign({}, init, { body: JSON.stringify(enriched) });
-        if (!lead.robot && typeof window.fbq === 'function') {
-          // todo cadastro é um Lead; só o qualificado dispara o CompleteRegistration
-          window.fbq('track', 'Lead', { content_name: PIXEL_NAME, qualified: lead.qualified }, { eventID: lead.eventId });
-          if (lead.qualified) window.fbq('track', 'CompleteRegistration', { content_name: PIXEL_NAME }, { eventID: lead.eventId + '-qualified' });
+        if (!lead.robot && lead.qualified && typeof window.fbq === 'function') {
+          // só o dono(a) da loja marca Lead na campanha
+          window.fbq('track', 'Lead', { content_name: PIXEL_NAME }, { eventID: lead.eventId });
         }
         // aviso por WhatsApp (o servidor também ignora robô, número repetido e excesso de envios)
         if (!lead.robot) {
