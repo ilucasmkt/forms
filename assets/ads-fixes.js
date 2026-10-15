@@ -5,7 +5,7 @@
  *  2. WhatsApp: máscara e só aceita celular brasileiro com DDD válido
  *  3. Pixel: só o dono(a) da loja conta como "Lead" na campanha (gerente, vendedor e dono de agência não),
  *     com o mesmo event_id enviado ao webhook
- *  4. aviso por WhatsApp para o Lucas a cada cadastro (pelo CRM, instância avisos-crm)
+ *  4. o cadastro vai só para o CRM, que avisa o Lucas no WhatsApp (instância avisos-crm); nada de Pipedrive
  *  5. aviso de privacidade (LGPD) no formulário e no rodapé
  *  6. proteção simples contra robôs (campo-isca e tempo de preenchimento)
  */
@@ -13,9 +13,8 @@
   'use strict';
 
   // ---- configuração ----
-  var WEBHOOK_PATH = '/webhook/pipedrive';
-  // aviso por WhatsApp: o CRM recebe o mesmo cadastro e manda a mensagem pela instância avisos-crm
-  var NOTIFY_URL = 'https://app.autowisebrasil.com.br/api/public/forms-lead';
+  // o envio do formulário (a página chama este endereço do CRM, que manda o aviso por WhatsApp)
+  var WEBHOOK_PATH = '/api/public/forms-lead';
   // só quem tem este cargo conta como Lead na campanha (todo cadastro avisa no WhatsApp)
   var LEAD_ROLE = 'Dono(a) da Loja';
   var PRIVACY_URL = '/privacidade.html';
@@ -258,14 +257,14 @@
       if (url.indexOf(WEBHOOK_PATH) !== -1 && init && typeof init.body === 'string') {
         var enriched = enrich(JSON.parse(init.body));
         lead = { eventId: enriched.event_id, qualified: enriched.qualificado, robot: enriched.suspeito_robo };
-        init = Object.assign({}, init, { body: JSON.stringify(enriched) });
+        if (lead.robot) {
+          // robô: não envia nada; a página segue como se tivesse enviado
+          return Promise.resolve(new Response('{"ok":true}', { status: 202, headers: { 'Content-Type': 'application/json' } }));
+        }
+        init = Object.assign({}, init, { body: JSON.stringify(enriched), keepalive: true });
         if (!lead.robot && lead.qualified && typeof window.fbq === 'function') {
           // só o dono(a) da loja marca Lead na campanha
           window.fbq('track', 'Lead', { content_name: PIXEL_NAME }, { eventID: lead.eventId });
-        }
-        // aviso por WhatsApp (o servidor também ignora robô, número repetido e excesso de envios)
-        if (!lead.robot) {
-          origFetch(NOTIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: init.body, keepalive: true }).catch(function () {});
         }
       }
     } catch (err) {
@@ -339,5 +338,5 @@
   scan();
 
   // para testes
-  window.__adsFixes = { isValidBrMobile: isValidBrMobile, formatBrPhone: formatBrPhone };
+  window.__adsFixes = { isValidBrMobile: isValidBrMobile, formatBrPhone: formatBrPhone, getLead: function () { return lead; } };
 })();
