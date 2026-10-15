@@ -209,7 +209,7 @@
       a.href = PRIVACY_URL;
       a.target = '_blank';
       a.rel = 'noopener';
-      a.className = 'underline text-blue-300';
+      a.className = 'underline text-gold';
       a.textContent = 'Política de Privacidade';
       p.appendChild(a);
       p.appendChild(document.createTextNode('.'));
