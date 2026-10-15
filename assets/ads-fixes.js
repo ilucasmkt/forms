@@ -3,9 +3,9 @@
  * Roda por cima da página já pronta, sem mexer no código dela:
  *  1. guarda de onde o visitante veio (UTMs, fbclid) e manda junto com o lead
  *  2. WhatsApp: máscara e só aceita celular brasileiro com DDD válido
- *  3. eventos do Pixel: "Lead" para todo envio e "CompleteRegistration" para o lead qualificado,
- *     com o mesmo event_id enviado ao webhook (pronto para a API de Conversões)
- *  4. quem não é qualificado não recebe o link de agendamento
+ *  3. eventos do Pixel: "Lead" para todo envio e "CompleteRegistration" para o lead qualificado
+ *     (dono da loja com estoque a partir de MIN_STOCK), com o mesmo event_id enviado ao webhook
+ *  4. aviso por WhatsApp para o Lucas a cada cadastro (pelo CRM, instância avisos-crm)
  *  5. aviso de privacidade (LGPD) no formulário e no rodapé
  *  6. proteção simples contra robôs (campo-isca e tempo de preenchimento)
  */
@@ -14,10 +14,14 @@
 
   // ---- configuração ----
   var WEBHOOK_PATH = '/webhook/pipedrive';
+  // aviso por WhatsApp: o CRM recebe o mesmo cadastro e manda a mensagem pela instância avisos-crm
+  var NOTIFY_URL = 'https://app.autowisebrasil.com.br/api/public/forms-lead';
+  // lead qualificado = dono(a) da loja com pelo menos este estoque (o servidor aplica a mesma regra)
+  var MIN_STOCK = 10;
   var PRIVACY_URL = '/privacidade.html';
   var PIXEL_NAME = 'Protocolo 5M';
   // Se o lead não for qualificado (não é dono, ou o investimento mínimo não faz sentido), esconde o Calendly
-  var HIDE_BOOKING_FOR_UNQUALIFIED = true;
+  var HIDE_BOOKING_FOR_UNQUALIFIED = false;
   var ATTRIBUTION_DAYS = 30;
   var STORE_KEY = 'ads_attribution_v1';
   var TRACK_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid'];
@@ -121,24 +125,6 @@
   // ---------- 3) Pixel: eventos com event_id ----------
   var lead = null; // { eventId, qualified }
 
-  function wrapFbq() {
-    var orig = window.fbq;
-    if (typeof orig !== 'function' || orig.__adsWrapped) return;
-    var wrapped = function () {
-      var a = Array.prototype.slice.call(arguments);
-      // o evento do lead qualificado leva o mesmo id (com sufixo) do envio, para deduplicar com a API de Conversões
-      if (a[0] === 'track' && a[1] === 'CompleteRegistration' && a.length < 4 && lead) {
-        a = [a[0], a[1], a[2] || {}, { eventID: lead.eventId + '-qualified' }];
-      }
-      return orig.apply(this, a);
-    };
-    for (var k in orig) {
-      if (Object.prototype.hasOwnProperty.call(orig, k)) wrapped[k] = orig[k];
-    }
-    wrapped.__adsWrapped = true;
-    window.fbq = wrapped;
-  }
-  wrapFbq();
 
   // ---------- 2 e 6) WhatsApp, isca e tempo de preenchimento ----------
   var formOpenedAt = 0;
@@ -240,7 +226,8 @@
     var data = (attribution && attribution.data) || {};
     var cookies = metaCookies(data);
     var trap = document.querySelector('[data-ads-trap]');
-    var qualified = body.cargo === 'Dono(a) da Loja' && /^sim/i.test(String(body.concordaValor || ''));
+    var stock = parseInt(String(body.estoque || '').replace(/\D/g, ''), 10);
+    var qualified = body.cargo === 'Dono(a) da Loja' && stock >= MIN_STOCK;
     var wa = digits(body.whatsapp);
     if (wa.length === 13 && wa.slice(0, 2) === '55') wa = wa.slice(2);
 
@@ -274,8 +261,13 @@
         lead = { eventId: enriched.event_id, qualified: enriched.qualificado, robot: enriched.suspeito_robo };
         init = Object.assign({}, init, { body: JSON.stringify(enriched) });
         if (!lead.robot && typeof window.fbq === 'function') {
-          // todo cadastro é um Lead; o qualificado ainda dispara o CompleteRegistration da própria página
+          // todo cadastro é um Lead; só o qualificado dispara o CompleteRegistration
           window.fbq('track', 'Lead', { content_name: PIXEL_NAME, qualified: lead.qualified }, { eventID: lead.eventId });
+          if (lead.qualified) window.fbq('track', 'CompleteRegistration', { content_name: PIXEL_NAME }, { eventID: lead.eventId + '-qualified' });
+        }
+        // aviso por WhatsApp (o servidor também ignora robô, número repetido e excesso de envios)
+        if (!lead.robot) {
+          origFetch(NOTIFY_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: init.body, keepalive: true }).catch(function () {});
         }
       }
     } catch (err) {
@@ -330,7 +322,6 @@
   var scheduled = false;
   function scan() {
     scheduled = false;
-    wrapFbq(); // caso o Pixel tenha sido recriado
     var tel = document.querySelector('input[type="tel"]');
     if (tel) {
       enhancePhone(tel);
